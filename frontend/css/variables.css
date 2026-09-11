@@ -1,0 +1,77 @@
+/* ==========================================================================
+   LUNAR CORRESPONDENCE AI — DESIGN SYSTEM TOKENS
+   Aerospace scientific visual language: Deep space, lunar regolith, precise accents
+   ========================================================================== */
+
+:root {
+  /* Color Palette — Deep Space & Lunar Regolith */
+  --bg-space: #07090e;
+  --bg-surface-1: #0d111a;
+  --bg-surface-2: #131824;
+  --bg-surface-3: #1a2233;
+  --bg-surface-card: #0f1522;
+  --bg-surface-hover: #1e273a;
+  
+  /* Hairline Borders & Transparencies */
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-medium: rgba(255, 255, 255, 0.14);
+  --border-active: rgba(56, 189, 248, 0.45);
+  --border-focus: #38bdf8;
+
+  /* Typography Colors */
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-dim: #475569;
+  
+  /* Restrained Aerospace Accents */
+  --accent-blue: #38bdf8;
+  --accent-blue-dim: rgba(56, 189, 248, 0.12);
+  --accent-blue-hover: #7dd3fc;
+  --accent-cobalt: #0284c7;
+  --accent-deep-blue: #0369a1;
+
+  /* Scientific State Colors */
+  --status-inlier: #10b981;
+  --status-inlier-bg: rgba(16, 185, 129, 0.12);
+  --status-inlier-border: rgba(16, 185, 129, 0.35);
+  
+  --status-outlier: #ef4444;
+  --status-outlier-bg: rgba(239, 68, 68, 0.12);
+  --status-outlier-border: rgba(239, 68, 68, 0.35);
+
+  --status-warn: #f59e0b;
+  --status-warn-bg: rgba(245, 158, 11, 0.12);
+
+  /* Typography Stacks */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Roboto Mono', Menlo, Consolas, monospace;
+
+  /* Spacing System */
+  --space-2xs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+
+  /* Border Radii — Restrained & Technical */
+  --radius-xs: 3px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Shadows — Deep & Subtle */
+  --shadow-subtle: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.55);
+  --shadow-elevated: 0 12px 32px rgba(0, 0, 0, 0.7);
+  --shadow-glow-blue: 0 0 20px rgba(56, 189, 248, 0.15);
+
+  /* Transitions */
+  --transition-fast: 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-normal: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-smooth: 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}

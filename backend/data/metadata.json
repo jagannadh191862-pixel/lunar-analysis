@@ -1,0 +1,47 @@
+[
+  {
+    "pair_name": "Chandrayaan-2 TMC-2 vs OHRC (Scale Disparity)",
+    "target_region": "Boguslawsky Crater / Lunar South Pole",
+    "center_latitude": -72.9,
+    "center_longitude": 43.2,
+    "ref_filename": "ch2_tmc2_boguslawsky.png",
+    "ref_sensor": "Chandrayaan-2 TMC-2",
+    "ref_gsd": 5.0,
+    "ref_sun_elevation": 16.0,
+    "tgt_filename": "ch2_ohrc_boguslawsky.png",
+    "tgt_sensor": "Chandrayaan-2 OHRC",
+    "tgt_gsd": 0.32,
+    "tgt_sun_elevation": 16.0,
+    "description": "Tests cross-instrument resolution invariance between ISRO TMC-2 (5.0m/px) and high-resolution OHRC (0.32m/px) camera footprints."
+  },
+  {
+    "pair_name": "LROC NAC Shackleton Rim (Multi-Illumination PSR)",
+    "target_region": "Shackleton Crater Rim / Permanent Shadow Region",
+    "center_latitude": -89.9,
+    "center_longitude": 0.0,
+    "ref_filename": "lroc_shackleton_lowsun.png",
+    "ref_sensor": "LROC NAC (Low Sun)",
+    "ref_gsd": 0.5,
+    "ref_sun_elevation": 4.0,
+    "tgt_filename": "lroc_shackleton_highsun.png",
+    "tgt_sensor": "LROC NAC (High Sun)",
+    "tgt_gsd": 0.5,
+    "tgt_sun_elevation": 14.0,
+    "description": "Validates illumination-invariant feature matching across extreme 10\u00b0 solar elevation variation and deep crater wall shadow elongation."
+  },
+  {
+    "pair_name": "Mare Serenitatis (Multi-Temporal Orbit Registration)",
+    "target_region": "Mare Serenitatis Regolith Field",
+    "center_latitude": 28.0,
+    "center_longitude": 17.5,
+    "ref_filename": "serenitatis_pass1.png",
+    "ref_sensor": "Orbiter Pass Epoch-1",
+    "ref_gsd": 1.2,
+    "ref_sun_elevation": 22.0,
+    "tgt_filename": "serenitatis_pass2.png",
+    "tgt_sensor": "Orbiter Pass Epoch-2",
+    "tgt_gsd": 1.2,
+    "tgt_sun_elevation": 21.0,
+    "description": "Evaluates sub-pixel orbital drift registration and feature persistence across distinct satellite observation epochs."
+  }
+]

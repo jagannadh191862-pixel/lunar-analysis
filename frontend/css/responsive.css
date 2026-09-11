@@ -1,0 +1,163 @@
+/* ==========================================================================
+   LUNAR CORRESPONDENCE AI — RESPONSIVE ADAPTATIONS
+   Precision breakpoints for 375px, 768px, 1024px, 1440px, 1920px
+   ========================================================================== */
+
+/* Mobile Breakpoint (< 768px) */
+@media (max-width: 767px) {
+  .site-header {
+    padding: 0 var(--space-md);
+    height: 56px;
+  }
+
+  .brand-subtitle {
+    display: none;
+  }
+
+  .telemetry-status-pill {
+    display: none;
+  }
+
+  /* Responsive Mobile Navigation Drawer / Menu */
+  .main-nav {
+    display: none;
+    position: fixed;
+    top: 56px;
+    left: 0;
+    width: 100%;
+    background: var(--bg-surface-1);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: var(--space-md);
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-xs);
+    z-index: 99;
+  }
+
+  .main-nav.mobile-open {
+    display: flex;
+  }
+
+  .mobile-nav-toggle {
+    display: flex !important;
+  }
+
+  .app-main {
+    padding: var(--space-md);
+  }
+
+  /* Hero adjustments */
+  .hero-section {
+    min-height: auto;
+    flex-direction: column;
+    padding-bottom: var(--space-xl);
+  }
+
+  .hero-orbit-canvas-container {
+    position: relative;
+    width: 100%;
+    height: 280px;
+  }
+
+  .hero-content-wrapper {
+    margin-left: 0;
+    padding: var(--space-lg) 0 0 0;
+    max-width: 100%;
+  }
+
+  .hero-actions {
+    flex-direction: column;
+    width: 100%;
+    gap: var(--space-sm);
+  }
+
+  .hero-actions .btn {
+    width: 100%;
+  }
+
+  .hero-meta-summary {
+    flex-wrap: wrap;
+    gap: var(--space-md);
+  }
+
+  .orbital-telemetry-hud {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    margin-top: var(--space-md);
+    width: 100%;
+  }
+
+  /* Viewer adjustments */
+  .viewer-viewport {
+    height: 380px;
+  }
+
+  .viewer-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+  }
+
+  .toolbar-group {
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+
+  .metrics-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-xs);
+  }
+
+  .metric-card {
+    padding: var(--space-sm);
+  }
+
+  .metric-value {
+    font-size: 1.25rem;
+  }
+
+  /* File upload dropzones */
+  .upload-split-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Footer */
+  .footer-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* Tablet Breakpoint (768px - 1023px) */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .hero-orbit-canvas-container {
+    width: 50%;
+  }
+
+  .hero-content-wrapper {
+    max-width: 460px;
+  }
+
+  .viewer-viewport {
+    height: 520px;
+  }
+
+  .metrics-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Standard Desktop & Large Displays (1024px - 1439px) */
+@media (min-width: 1024px) {
+  .mobile-nav-toggle {
+    display: none !important;
+  }
+}
+
+/* Ultrawide Displays (>= 1440px) */
+@media (min-width: 1440px) {
+  .viewer-viewport {
+    height: 700px;
+  }
+}
