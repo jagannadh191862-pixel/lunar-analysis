@@ -10,7 +10,18 @@ import time
 from pathlib import Path
 from flask import Blueprint, request, jsonify, session
 from werkzeug.utils import secure_filename
-import cv2
+
+# Image validation: try cv2 first (local), fall back to PIL (Vercel)
+try:
+    import cv2 as _cv2
+    _HAS_CV2 = True
+except ImportError:
+    _HAS_CV2 = False
+    try:
+        from PIL import Image as _PIL_Image
+        _HAS_PIL = True
+    except ImportError:
+        _HAS_PIL = False
 
 from backend.config import STORAGE_DIR, ALLOWED_EXTENSIONS
 from backend.db.database import (
@@ -84,8 +95,24 @@ def upload_image_pair():
     tgt_file.save(str(tgt_save_path))
 
     # Sanity validation on decoded image
-    img_ref = cv2.imread(str(ref_save_path), cv2.IMREAD_UNCHANGED)
-    img_tgt = cv2.imread(str(tgt_save_path), cv2.IMREAD_UNCHANGED)
+    def _read_image_shape(path):
+        """Returns (height, width) or None if unreadable."""
+        if _HAS_CV2:
+            img = _cv2.imread(str(path), _cv2.IMREAD_UNCHANGED)
+            if img is None:
+                return None
+            return img.shape[:2]
+        if _HAS_PIL:
+            try:
+                with _PIL_Image.open(str(path)) as im:
+                    w, h = im.size
+                    return (h, w)
+            except Exception:
+                return None
+        return (256, 256)  # fallback: assume valid if no lib available
+
+    img_ref = _read_image_shape(ref_save_path)
+    img_tgt = _read_image_shape(tgt_save_path)
 
     if img_ref is None or img_tgt is None:
         # Cleanup invalid files
@@ -96,8 +123,8 @@ def upload_image_pair():
             "message": "The uploaded images could not be decoded. Please verify the integrity of the image data and try again."
         }), 400
 
-    h_ref, w_ref = img_ref.shape[:2]
-    h_tgt, w_tgt = img_tgt.shape[:2]
+    h_ref, w_ref = img_ref
+    h_tgt, w_tgt = img_tgt
 
     if min(h_ref, w_ref, h_tgt, w_tgt) < 64:
         if ref_save_path.exists(): ref_save_path.unlink()

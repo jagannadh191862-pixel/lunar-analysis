@@ -1,12 +1,13 @@
 """
 Lunar Correspondence AI - Scientific Web Application Server
 Production-grade Flask server serving REST APIs and static aerospace interface.
+Vercel-compatible: benchmark images and uploads served via Flask routes.
 """
 
 import os
 import sys
 from pathlib import Path
-from flask import Flask, send_from_directory, jsonify, render_template_string
+from flask import Flask, send_from_directory, jsonify, send_file
 from flask_cors import CORS
 
 # Ensure backend root is in sys.path
@@ -30,8 +31,12 @@ from backend.api.routes_demo import demo_bp, ensure_benchmark_database_records
 from backend.api.routes_analysis import analysis_bp
 from backend.api.routes_export import export_bp
 
+_IS_VERCEL = bool(os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"))
+
 def create_app() -> Flask:
-    app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="")
+    # On Vercel, static files are served from /public by Vercel CDN,
+    # so we don't need Flask to serve them — only the API matters.
+    app = Flask(__name__, static_folder=None)
     app.config["SECRET_KEY"] = SECRET_KEY
     app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
@@ -39,8 +44,11 @@ def create_app() -> Flask:
     CORS(app, supports_credentials=True)
 
     # Initialize Database & Seed Benchmarks
-    init_db()
-    ensure_benchmark_database_records()
+    try:
+        init_db()
+        ensure_benchmark_database_records()
+    except Exception as e:
+        print(f"[WARN] DB init warning (non-fatal on cold start): {e}")
 
     # Register API Blueprints
     app.register_blueprint(auth_bp)
@@ -48,18 +56,36 @@ def create_app() -> Flask:
     app.register_blueprint(analysis_bp)
     app.register_blueprint(export_bp)
 
-    # Serve static assets
-    @app.route("/")
-    def serve_index():
-        return send_from_directory(str(FRONTEND_DIR), "index.html")
-
+    # Serve benchmark images (needed on Vercel where /backend/data is bundled)
     @app.route("/data/benchmark_pairs/<path:filename>")
     def serve_benchmark_image(filename):
-        return send_from_directory(str(BENCHMARK_DIR), filename)
+        safe = Path(filename).name  # prevent path traversal
+        fp = BENCHMARK_DIR / safe
+        if not fp.exists():
+            return jsonify({"error": "Benchmark image not found"}), 404
+        return send_file(str(fp))
 
+    # Serve user-uploaded images (stored in /tmp on Vercel)
     @app.route("/storage/uploads/<path:filename>")
     def serve_uploaded_image(filename):
-        return send_from_directory(str(STORAGE_DIR), filename)
+        safe = Path(filename).name
+        fp = STORAGE_DIR / safe
+        if not fp.exists():
+            return jsonify({"error": "Upload not found"}), 404
+        return send_file(str(fp))
+
+    # Serve frontend index.html for non-API, non-Vercel environments
+    if not _IS_VERCEL:
+        @app.route("/")
+        def serve_index():
+            return send_from_directory(str(FRONTEND_DIR), "index.html")
+
+        @app.route("/<path:filename>")
+        def serve_static(filename):
+            fp = FRONTEND_DIR / filename
+            if fp.is_file():
+                return send_from_directory(str(FRONTEND_DIR), filename)
+            return send_from_directory(str(FRONTEND_DIR), "index.html")
 
     # Professional scientific error handlers
     @app.errorhandler(400)

@@ -1,223 +1,228 @@
 """
-Lunar Correspondence Vision Engine
+Lunar Correspondence Vision Engine — Vercel-Compatible (scikit-image)
 Scientific Multi-Modal Feature Extraction, Descriptor Matching,
 and RANSAC Geometric Verification for Planetary Remote Sensing Imagery.
+Uses scikit-image + scipy instead of opencv to stay within Vercel's 50MB bundle limit.
 """
 
 import time
 import json
 import logging
 import numpy as np
-import cv2
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
 logger = logging.getLogger("lunar_vision_engine")
 logging.basicConfig(level=logging.INFO)
 
+# ---------------------------------------------------------------------------
+# Try opencv first (local dev), fall back to scikit-image (Vercel)
+# ---------------------------------------------------------------------------
+try:
+    import cv2 as _cv2
+    _BACKEND = "opencv"
+except ImportError:
+    _cv2 = None
+    _BACKEND = "skimage"
+
+try:
+    from PIL import Image
+    import io
+    _PIL_OK = True
+except ImportError:
+    _PIL_OK = False
+
+try:
+    from skimage import io as sk_io
+    from skimage.color import rgb2gray
+    from skimage.exposure import equalize_adapthist
+    from skimage.feature import ORB, SIFT, match_descriptors
+    from skimage.measure import ransac
+    from skimage.transform import ProjectiveTransform, AffineTransform, resize
+    _SKIMAGE_OK = True
+except ImportError:
+    _SKIMAGE_OK = False
+
+logger.info(f"Vision Engine Backend: {_BACKEND} | skimage={_SKIMAGE_OK} | PIL={_PIL_OK}")
+
+
 class LunarVisionEngine:
     """
-    High-precision computer vision pipeline designed for lunar surface correspondence.
-    Handles high-contrast shadowed terrain, scale disparities (e.g. TMC-2 vs OHRC),
+    High-precision computer vision pipeline for lunar surface correspondence.
+    Handles high-contrast shadowed terrain, scale disparities (TMC-2 vs OHRC),
     and illumination variation across planetary orbital passes.
     """
 
     def __init__(self):
         pass
 
-    def load_and_preprocess(self, image_path: str, clahe_enabled: bool = True) -> Tuple[np.ndarray, np.ndarray, float]:
-        """
-        Loads an image from disk, converts to 8-bit single-channel lunar grayscale,
-        and applies Contrast-Limited Adaptive Histogram Equalization (CLAHE) for shadowed crater recovery.
-        Returns: (raw_gray, processed_gray, elapsed_ms)
-        """
-        t0 = time.perf_counter()
+    # ------------------------------------------------------------------
+    # Image Loading
+    # ------------------------------------------------------------------
+    def _load_gray(self, image_path: str) -> np.ndarray:
+        """Load image and return normalised uint8 grayscale array."""
         p = Path(image_path)
         if not p.exists():
-            raise FileNotFoundError(f"Image not found at path: {image_path}")
+            raise FileNotFoundError(f"Image not found: {image_path}")
 
-        img = cv2.imread(str(p), cv2.IMREAD_UNCHANGED)
-        if img is None:
-            raise ValueError(f"Failed to decode image data: {image_path}")
+        if _BACKEND == "opencv":
+            img = _cv2.imread(str(p), _cv2.IMREAD_UNCHANGED)
+            if img is None:
+                raise ValueError(f"cv2 could not decode: {image_path}")
+            if len(img.shape) == 3:
+                gray = _cv2.cvtColor(img, _cv2.COLOR_BGR2GRAY)
+            else:
+                gray = img
+            if gray.dtype != np.uint8:
+                gray = _cv2.normalize(gray, None, 0, 255, _cv2.NORM_MINMAX, dtype=_cv2.CV_8U)
+            return gray
 
-        # Convert to single-channel 8-bit grayscale
-        if len(img.shape) == 3:
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = img
+        # scikit-image / PIL fallback
+        if _PIL_OK:
+            with Image.open(str(p)) as im:
+                im_arr = np.array(im.convert("L"))  # L = 8-bit grayscale
+            return im_arr.astype(np.uint8)
 
-        if gray.dtype != np.uint8:
-            gray = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        if _SKIMAGE_OK:
+            raw = sk_io.imread(str(p))
+            if raw.ndim == 3:
+                gray = rgb2gray(raw)
+            else:
+                gray = raw.astype(float) / max(raw.max(), 1)
+            gray_u8 = (gray * 255).astype(np.uint8)
+            return gray_u8
 
-        raw_gray = gray.copy()
+        raise RuntimeError("No image-loading library available (cv2 / PIL / skimage).")
 
-        # CLAHE enhances micro-topography in permanent shadow regions (PSR)
-        if clahe_enabled:
-            clahe = cv2.createCLAHE(clipLimit=2.8, tileGridSize=(8, 8))
-            processed_gray = clahe.apply(raw_gray)
-        else:
-            processed_gray = raw_gray
+    def _clahe(self, gray: np.ndarray) -> np.ndarray:
+        """Contrast-limited adaptive histogram equalisation."""
+        if _BACKEND == "opencv":
+            clahe = _cv2.createCLAHE(clipLimit=2.8, tileGridSize=(8, 8))
+            return clahe.apply(gray)
+        # scikit-image version: equalize_adapthist expects float [0,1]
+        norm = gray.astype(np.float32) / 255.0
+        eq = equalize_adapthist(norm, clip_limit=0.011)
+        return (eq * 255).astype(np.uint8)
 
-        # Subtle bilateral filtering to suppress sensor read noise while preserving sharp crater rim edges
-        processed_gray = cv2.bilateralFilter(processed_gray, d=5, sigmaColor=25, sigmaSpace=25)
+    # ------------------------------------------------------------------
+    # Feature Extraction
+    # ------------------------------------------------------------------
+    def _extract_orb_opencv(self, gray: np.ndarray, n_features: int = 1000):
+        orb = _cv2.ORB_create(nfeatures=n_features, scaleFactor=1.2, nlevels=8)
+        kps, descs = orb.detectAndCompute(gray, None)
+        if descs is None:
+            return np.empty((0, 2), dtype=np.float32), np.empty((0, 32), dtype=np.uint8)
+        pts = np.array([[kp.pt[0], kp.pt[1]] for kp in kps], dtype=np.float32)
+        return pts, descs
 
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        return raw_gray, processed_gray, elapsed_ms
+    def _extract_sift_opencv(self, gray: np.ndarray, n_features: int = 500):
+        sift = _cv2.SIFT_create(nfeatures=n_features)
+        kps, descs = sift.detectAndCompute(gray, None)
+        if descs is None:
+            return np.empty((0, 2), dtype=np.float32), np.empty((0, 128), dtype=np.float32)
+        pts = np.array([[kp.pt[0], kp.pt[1]] for kp in kps], dtype=np.float32)
+        return pts, descs
 
-    def extract_features(self, gray_img: np.ndarray, detector_type: str = "ORB") -> Tuple[List[cv2.KeyPoint], np.ndarray, float]:
-        """
-        Extracts multi-scale planetary keypoints and compact descriptors.
-        Supported detectors: 'ORB', 'SIFT', 'AKAZE'
-        """
-        t0 = time.perf_counter()
-        detector_type = detector_type.upper()
+    def _extract_akaze_opencv(self, gray: np.ndarray):
+        akaze = _cv2.AKAZE_create()
+        kps, descs = akaze.detectAndCompute(gray, None)
+        if descs is None:
+            return np.empty((0, 2), dtype=np.float32), np.empty((0, 61), dtype=np.uint8)
+        pts = np.array([[kp.pt[0], kp.pt[1]] for kp in kps], dtype=np.float32)
+        return pts, descs
 
-        if detector_type == "SIFT":
-            # Scale-Invariant Feature Transform: optimal for extreme resolution disparity (TMC-2 vs OHRC)
-            detector = cv2.SIFT_create(
-                nfeatures=2500,
-                nOctaveLayers=4,
-                contrastThreshold=0.03,
-                edgeThreshold=12,
-                sigma=1.6
-            )
-        elif detector_type == "AKAZE":
-            detector = cv2.AKAZE_create(
-                descriptor_type=cv2.AKAZE_DESCRIPTOR_MLDB,
-                descriptor_size=0,
-                descriptor_channels=3,
-                threshold=0.001
-            )
-        else: # Default ORB
-            # Oriented FAST and Rotated BRIEF: robust and fast for real-time analysis
-            detector = cv2.ORB_create(
-                nfeatures=3000,
-                scaleFactor=1.2,
-                nlevels=8,
-                edgeThreshold=15,
-                firstLevel=0,
-                WTA_K=2,
-                scoreType=cv2.ORB_HARRIS_SCORE,
-                patchSize=31,
-                fastThreshold=12
-            )
+    def _extract_orb_skimage(self, gray: np.ndarray, n_keypoints: int = 500):
+        detector = ORB(n_keypoints=n_keypoints, fast_n=9, fast_threshold=0.08)
+        detector.detect_and_extract(gray.astype(np.float32) / 255.0)
+        return detector.keypoints[:, ::-1].astype(np.float32), detector.descriptors
 
-        keypoints, descriptors = detector.detectAndCompute(gray_img, None)
-
-        if descriptors is None:
-            keypoints = []
-            descriptors = np.empty((0, 32 if detector_type == "ORB" else 128), dtype=np.uint8)
-
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        return keypoints, descriptors, elapsed_ms
-
-    def match_features(
-        self,
-        desc_a: np.ndarray,
-        desc_b: np.ndarray,
-        detector_type: str = "ORB",
-        ratio_threshold: float = 0.75
-    ) -> Tuple[List[cv2.DMatch], float]:
-        """
-        Performs descriptor matching with Lowe's Ratio Test to reject ambiguous texture matches.
-        """
-        t0 = time.perf_counter()
-        detector_type = detector_type.upper()
-
-        if desc_a is None or desc_b is None or len(desc_a) == 0 or len(desc_b) == 0:
-            return [], (time.perf_counter() - t0) * 1000.0
-
-        # Select norm based on descriptor binary/float type
-        if detector_type in ["ORB", "AKAZE"]:
-            matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
-        else:
-            matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
-
-        # k-NN match with k=2 for ratio test
+    def _extract_sift_skimage(self, gray: np.ndarray):
         try:
-            raw_matches = matcher.knnMatch(desc_a, desc_b, k=2)
-        except Exception as e:
-            logger.warning(f"Matcher error: {e}")
-            return [], (time.perf_counter() - t0) * 1000.0
+            detector = SIFT()
+            detector.detect_and_extract(gray.astype(np.float32) / 255.0)
+            return detector.keypoints[:, ::-1].astype(np.float32), detector.descriptors
+        except Exception:
+            return self._extract_orb_skimage(gray)
 
-        good_matches = []
-        for match_pair in raw_matches:
-            if len(match_pair) == 2:
-                m, n = match_pair
-                if m.distance < ratio_threshold * n.distance:
-                    good_matches.append(m)
-            elif len(match_pair) == 1:
-                good_matches.append(match_pair[0])
+    def _extract_features(self, gray: np.ndarray, detector_type: str):
+        if _BACKEND == "opencv":
+            if detector_type == "SIFT":
+                return self._extract_sift_opencv(gray)
+            elif detector_type == "AKAZE":
+                return self._extract_akaze_opencv(gray)
+            else:
+                return self._extract_orb_opencv(gray)
+        else:
+            if detector_type == "SIFT":
+                return self._extract_sift_skimage(gray)
+            else:
+                return self._extract_orb_skimage(gray)
 
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        return good_matches, elapsed_ms
+    # ------------------------------------------------------------------
+    # Descriptor Matching
+    # ------------------------------------------------------------------
+    def _match_opencv(self, descs_ref, descs_tgt, detector_type: str, ratio_threshold: float):
+        if detector_type in ("SIFT",):
+            bf = _cv2.BFMatcher(_cv2.NORM_L2, crossCheck=False)
+        else:
+            bf = _cv2.BFMatcher(_cv2.NORM_HAMMING, crossCheck=False)
+        raw = bf.knnMatch(descs_ref, descs_tgt, k=2)
+        good = [(m.queryIdx, m.trainIdx, m.distance)
+                for m, n in raw if len([m, n]) == 2 and m.distance < ratio_threshold * n.distance]
+        return good
 
-    def geometric_verification(
-        self,
-        kp_a: List[cv2.KeyPoint],
-        kp_b: List[cv2.KeyPoint],
-        matches: List[cv2.DMatch],
-        model_type: str = "HOMOGRAPHY",
-        ransac_threshold: float = 2.5
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
-        """
-        Estimates the rigid or projective planetary transformation matrix using RANSAC.
-        Calculates per-point reprojection residuals and inlier mask.
-        Returns: (matrix, inlier_mask, residuals, elapsed_ms)
-        """
-        t0 = time.perf_counter()
-        model_type = model_type.upper()
+    def _match_skimage(self, descs_ref, descs_tgt, ratio_threshold: float):
+        """Binary descriptor matching via Hamming distance with ratio test."""
+        if descs_ref.dtype == bool:
+            matches = match_descriptors(descs_ref, descs_tgt, metric="hamming",
+                                        cross_check=True, max_ratio=ratio_threshold)
+        else:
+            matches = match_descriptors(descs_ref, descs_tgt, metric="euclidean",
+                                        cross_check=True, max_ratio=ratio_threshold)
+        # returns Nx2 array of [ref_idx, tgt_idx]
+        return [(int(m[0]), int(m[1]), 0.0) for m in matches]
 
+    # ------------------------------------------------------------------
+    # RANSAC Geometric Verification
+    # ------------------------------------------------------------------
+    def _ransac_opencv(self, pts_ref, pts_tgt, matches, model_type: str, ransac_threshold: float):
         if len(matches) < 4:
-            return np.eye(3), np.zeros(len(matches), dtype=bool), np.zeros(len(matches)), (time.perf_counter() - t0) * 1000.0
-
-        pts_a = np.float32([kp_a[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
-        pts_b = np.float32([kp_b[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
-
-        inlier_mask = np.zeros(len(matches), dtype=bool)
-        residuals = np.zeros(len(matches), dtype=np.float64)
-
+            return [], None, []
+        src = np.float32([pts_ref[m[0]] for m in matches]).reshape(-1, 1, 2)
+        dst = np.float32([pts_tgt[m[1]] for m in matches]).reshape(-1, 1, 2)
         if model_type == "AFFINE":
-            # Affine model (scale, rotation, translation, shear)
-            matrix_2x3, inliers = cv2.estimateAffine2D(
-                pts_a, pts_b,
-                method=cv2.RANSAC,
-                ransacReprojThreshold=ransac_threshold,
-                maxIters=3000,
-                confidence=0.99
+            H, mask = _cv2.estimateAffine2D(src, dst, method=_cv2.RANSAC,
+                                             ransacReprojThreshold=ransac_threshold)
+        else:
+            H, mask = _cv2.findHomography(src, dst, _cv2.RANSAC, ransac_threshold)
+        if H is None or mask is None:
+            return [], None, []
+        inlier_idx = [i for i, v in enumerate(mask.ravel()) if v]
+        return inlier_idx, H, mask.ravel().tolist()
+
+    def _ransac_skimage(self, pts_ref, pts_tgt, matches, model_type: str, ransac_threshold: float):
+        if len(matches) < 4:
+            return [], None, []
+        src = np.array([[pts_ref[m[0]][0], pts_ref[m[0]][1]] for m in matches], dtype=np.float64)
+        dst = np.array([[pts_tgt[m[1]][0], pts_tgt[m[1]][1]] for m in matches], dtype=np.float64)
+        Model = AffineTransform if model_type == "AFFINE" else ProjectiveTransform
+        try:
+            model_robust, inlier_mask = ransac(
+                (src, dst), Model,
+                min_samples=4,
+                residual_threshold=ransac_threshold,
+                max_trials=500
             )
-            if matrix_2x3 is not None:
-                matrix = np.eye(3, dtype=np.float64)
-                matrix[0:2, :] = matrix_2x3
-                inlier_mask = (inliers.ravel() == 1)
+            inlier_idx = [i for i, v in enumerate(inlier_mask) if v]
+            H = model_robust.params if model_robust else None
+            return inlier_idx, H, inlier_mask.tolist()
+        except Exception as e:
+            logger.warning(f"RANSAC failed: {e}")
+            return [], None, []
 
-                # Calculate reprojection residuals
-                ones = np.ones((len(pts_a), 1, 1), dtype=np.float32)
-                pts_a_homo = np.concatenate([pts_a, ones], axis=2).reshape(-1, 3)
-                projected = (matrix @ pts_a_homo.T).T[:, 0:2]
-                residuals = np.linalg.norm(projected - pts_b.reshape(-1, 2), axis=1)
-            else:
-                matrix = np.eye(3)
-        else: # Default HOMOGRAPHY
-            # Projective Homography: accounts for sensor perspective shift across oblique lunar angles
-            matrix, inliers = cv2.findHomography(
-                pts_a, pts_b,
-                method=cv2.RANSAC,
-                ransacReprojThreshold=ransac_threshold,
-                maxIters=4000,
-                confidence=0.995
-            )
-            if matrix is not None and inliers is not None:
-                inlier_mask = (inliers.ravel() == 1)
-                # Compute projective reprojection residuals
-                projected = cv2.perspectiveTransform(pts_a, matrix)
-                residuals = np.linalg.norm(projected.reshape(-1, 2) - pts_b.reshape(-1, 2), axis=1)
-            else:
-                matrix = np.eye(3)
-
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        return matrix, inlier_mask, residuals, elapsed_ms
-
+    # ------------------------------------------------------------------
+    # Main Pipeline
+    # ------------------------------------------------------------------
     def analyze_pair(
         self,
         ref_image_path: str,
@@ -228,105 +233,155 @@ class LunarVisionEngine:
         ratio_threshold: float = 0.75,
         clahe_enabled: bool = True
     ) -> Dict[str, Any]:
-        """
-        Executes full scientific analysis pipeline on an image pair.
-        Returns complete metrics and individual correspondence vector coordinates.
-        """
-        total_t0 = time.perf_counter()
 
-        # Stage 1: Validation and Preprocessing
-        raw_ref, prep_ref, prep_ref_ms = self.load_and_preprocess(ref_image_path, clahe_enabled)
-        raw_tgt, prep_tgt, prep_tgt_ms = self.load_and_preprocess(tgt_image_path, clahe_enabled)
-        preprocessing_ms = prep_ref_ms + prep_tgt_ms
+        t_total = time.perf_counter()
+
+        # Stage 1: Preprocessing
+        t0 = time.perf_counter()
+        gray_ref = self._load_gray(ref_image_path)
+        gray_tgt = self._load_gray(tgt_image_path)
+        h_ref, w_ref = gray_ref.shape[:2]
+        h_tgt, w_tgt = gray_tgt.shape[:2]
+
+        if clahe_enabled:
+            gray_ref = self._clahe(gray_ref)
+            gray_tgt = self._clahe(gray_tgt)
+        preprocessing_ms = (time.perf_counter() - t0) * 1000
 
         # Stage 2: Feature Extraction
-        kp_ref, desc_ref, ext_ref_ms = self.extract_features(prep_ref, detector_type)
-        kp_tgt, desc_tgt, ext_tgt_ms = self.extract_features(prep_tgt, detector_type)
-        extraction_ms = ext_ref_ms + ext_tgt_ms
+        t0 = time.perf_counter()
+        pts_ref, descs_ref = self._extract_features(gray_ref, detector_type)
+        pts_tgt, descs_tgt = self._extract_features(gray_tgt, detector_type)
+        extraction_ms = (time.perf_counter() - t0) * 1000
 
-        # Stage 3: Multi-Modal Matching
-        matches, matching_ms = self.match_features(desc_ref, desc_tgt, detector_type, ratio_threshold)
+        kp_ref_count = len(pts_ref)
+        kp_tgt_count = len(pts_tgt)
 
-        # Stage 4: Geometric Verification via RANSAC
-        matrix, inlier_mask, residuals, verification_ms = self.geometric_verification(
-            kp_ref, kp_tgt, matches, model_type, ransac_threshold
-        )
+        if kp_ref_count < 4 or kp_tgt_count < 4 or descs_ref is None or descs_tgt is None:
+            raise ValueError(
+                f"Insufficient keypoints for correspondence: ref={kp_ref_count}, tgt={kp_tgt_count}. "
+                "Try a higher-resolution image or a different detector."
+            )
 
-        total_time_ms = (time.perf_counter() - total_t0) * 1000.0
-
-        # Calculate scientific metrics
-        total_matches = len(matches)
-        verified_inliers = int(np.sum(inlier_mask))
-        inlier_ratio = (verified_inliers / total_matches * 100.0) if total_matches > 0 else 0.0
-
-        if verified_inliers > 0:
-            rmse_px = float(np.sqrt(np.mean(residuals[inlier_mask] ** 2)))
+        # Stage 3: Descriptor Matching with Lowe ratio test
+        t0 = time.perf_counter()
+        if _BACKEND == "opencv":
+            matches = self._match_opencv(descs_ref, descs_tgt, detector_type, ratio_threshold)
         else:
-            rmse_px = 0.0
+            matches = self._match_skimage(descs_ref, descs_tgt, ratio_threshold)
+        matching_ms = (time.perf_counter() - t0) * 1000
+        initial_match_count = len(matches)
 
-        # Decompose transformation matrix to physical parameters
-        scale_x = float(np.sqrt(matrix[0, 0]**2 + matrix[1, 0]**2))
-        scale_y = float(np.sqrt(matrix[0, 1]**2 + matrix[1, 1]**2))
-        estimated_scale = float((scale_x + scale_y) / 2.0)
-        rotation_rad = float(np.arctan2(matrix[1, 0], matrix[0, 0]))
-        rotation_deg = float(np.degrees(rotation_rad))
-        translation_x = float(matrix[0, 2])
-        translation_y = float(matrix[1, 2])
+        # Stage 4: RANSAC Geometric Verification
+        t0 = time.perf_counter()
+        if _BACKEND == "opencv":
+            inlier_idx, H, mask = self._ransac_opencv(pts_ref, pts_tgt, matches, model_type, ransac_threshold)
+        else:
+            inlier_idx, H, mask = self._ransac_skimage(pts_ref, pts_tgt, matches, model_type, ransac_threshold)
+        verification_ms = (time.perf_counter() - t0) * 1000
 
-        # Prepare matched vector coordinates
-        matches_data = []
-        max_dist = max([m.distance for m in matches]) if matches else 1.0
-        if max_dist <= 0:
-            max_dist = 1.0
+        inlier_count = len(inlier_idx)
+        inlier_ratio = (inlier_count / initial_match_count * 100) if initial_match_count > 0 else 0.0
+        inlier_set = set(inlier_idx)
 
+        # Stage 5: Geometric Decomposition
+        estimated_scale = 1.0
+        estimated_rotation_deg = 0.0
+        estimated_tx = 0.0
+        estimated_ty = 0.0
+        rmse = 0.0
+        H_json = "null"
+
+        if H is not None:
+            H_arr = np.array(H)
+            H_json = json.dumps(H_arr.tolist())
+            if model_type == "AFFINE" and H_arr.shape == (2, 3):
+                estimated_scale = float(np.sqrt(abs(np.linalg.det(H_arr[:, :2]))))
+                estimated_rotation_deg = float(np.degrees(np.arctan2(H_arr[1, 0], H_arr[0, 0])))
+                estimated_tx = float(H_arr[0, 2])
+                estimated_ty = float(H_arr[1, 2])
+            elif H_arr.shape == (3, 3):
+                estimated_scale = float(np.sqrt(abs(np.linalg.det(H_arr[:2, :2]))))
+                estimated_rotation_deg = float(np.degrees(np.arctan2(H_arr[1, 0], H_arr[0, 0])))
+                estimated_tx = float(H_arr[0, 2])
+                estimated_ty = float(H_arr[1, 2])
+
+            # RMSE on inliers
+            if inlier_idx:
+                residuals = []
+                H_arr_f = H_arr.astype(np.float64)
+                for i in inlier_idx:
+                    m = matches[i]
+                    rx, ry = float(pts_ref[m[0]][0]), float(pts_ref[m[0]][1])
+                    tx, ty = float(pts_tgt[m[1]][0]), float(pts_tgt[m[1]][1])
+                    src_h = np.array([rx, ry, 1.0])
+                    if model_type == "AFFINE" and H_arr_f.shape == (2, 3):
+                        proj = H_arr_f @ src_h
+                        residuals.append(np.sqrt((proj[0]-tx)**2 + (proj[1]-ty)**2))
+                    else:
+                        proj = H_arr_f @ src_h
+                        if abs(proj[2]) > 1e-9:
+                            proj = proj / proj[2]
+                        residuals.append(np.sqrt((proj[0]-tx)**2 + (proj[1]-ty)**2))
+                rmse = float(np.sqrt(np.mean(np.array(residuals)**2))) if residuals else 0.0
+
+        total_ms = (time.perf_counter() - t_total) * 1000
+
+        # Build match records
+        match_records = []
         for i, m in enumerate(matches):
-            pt_a = kp_ref[m.queryIdx].pt
-            pt_b = kp_tgt[m.trainIdx].pt
-            is_in = bool(inlier_mask[i])
-            res = float(residuals[i])
-            # Normalize confidence: high distance = lower confidence, inliers get confidence boost
-            conf = max(0.05, min(0.99, 1.0 - (m.distance / (max_dist * 1.3))))
-            if not is_in:
-                conf *= 0.6
+            r_idx, t_idx = m[0], m[1]
+            rx, ry = float(pts_ref[r_idx][0]), float(pts_ref[r_idx][1])
+            tx, ty = float(pts_tgt[t_idx][0]), float(pts_tgt[t_idx][1])
+            dist = float(m[2])
+            confidence = max(0.0, min(1.0, 1.0 - dist / 512.0)) if dist > 0 else 0.85
+            is_inlier = i in inlier_set
+            residual = 0.0
+            if is_inlier and H is not None:
+                H_arr_f = np.array(H).astype(np.float64)
+                src_h = np.array([rx, ry, 1.0])
+                if model_type == "AFFINE" and H_arr_f.shape == (2, 3):
+                    proj = H_arr_f @ src_h
+                    residual = float(np.sqrt((proj[0]-tx)**2 + (proj[1]-ty)**2))
+                else:
+                    proj = H_arr_f @ src_h
+                    if abs(proj[2]) > 1e-9:
+                        proj = proj / proj[2]
+                    residual = float(np.sqrt((proj[0]-tx)**2 + (proj[1]-ty)**2))
 
-            matches_data.append({
-                "match_index": i,
-                "ref_x": round(float(pt_a[0]), 2),
-                "ref_y": round(float(pt_a[1]), 2),
-                "tgt_x": round(float(pt_b[0]), 2),
-                "tgt_y": round(float(pt_b[1]), 2),
-                "confidence": round(float(conf), 4),
-                "is_inlier": is_in,
-                "residual_error": round(res, 2)
+            match_records.append({
+                "ref_x": rx, "ref_y": ry,
+                "tgt_x": tx, "tgt_y": ty,
+                "confidence": round(confidence, 4),
+                "is_inlier": is_inlier,
+                "residual_error": round(residual, 4)
             })
 
         metrics = {
-            "keypoints_ref_count": len(kp_ref),
-            "keypoints_tgt_count": len(kp_tgt),
-            "initial_matches_count": total_matches,
-            "verified_inliers_count": verified_inliers,
+            "keypoints_ref_count": kp_ref_count,
+            "keypoints_tgt_count": kp_tgt_count,
+            "initial_matches_count": initial_match_count,
+            "verified_inliers_count": inlier_count,
             "inlier_ratio_percent": round(inlier_ratio, 2),
-            "rmse_residual_px": round(rmse_px, 3),
-            "estimated_scale": round(estimated_scale, 4),
-            "estimated_rotation_deg": round(rotation_deg, 2),
-            "estimated_translation_x": round(translation_x, 2),
-            "estimated_translation_y": round(translation_y, 2),
-            "transform_matrix_json": json.dumps(matrix.tolist()),
+            "rmse_residual_px": round(rmse, 4),
+            "estimated_scale": round(estimated_scale, 6),
+            "estimated_rotation_deg": round(estimated_rotation_deg, 4),
+            "estimated_translation_x": round(estimated_tx, 4),
+            "estimated_translation_y": round(estimated_ty, 4),
+            "transform_matrix_json": H_json,
             "preprocessing_ms": round(preprocessing_ms, 2),
             "extraction_ms": round(extraction_ms, 2),
             "matching_ms": round(matching_ms, 2),
             "verification_ms": round(verification_ms, 2),
-            "total_time_ms": round(total_time_ms, 2),
-            "image_ref_width": raw_ref.shape[1],
-            "image_ref_height": raw_ref.shape[0],
-            "image_tgt_width": raw_tgt.shape[1],
-            "image_tgt_height": raw_tgt.shape[0]
+            "total_time_ms": round(total_ms, 2),
+            "ref_dimensions": f"{w_ref}x{h_ref}",
+            "tgt_dimensions": f"{w_tgt}x{h_tgt}",
+            "backend": _BACKEND,
+            "detector": detector_type,
+            "model": model_type,
         }
 
-        return {
-            "metrics": metrics,
-            "matches": matches_data
-        }
+        return {"metrics": metrics, "matches": match_records}
 
-# Global singleton
+
 vision_engine = LunarVisionEngine()

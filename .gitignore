@@ -10,8 +10,8 @@ venv/
 env/
 .venv/
 
-# Database
-*.db
+# Database (local dev only)
+backend/db/lunar_ai.db
 *.sqlite3
 
 # Storage uploads (user data, not tracked)
@@ -27,3 +27,6 @@ backend/storage/uploads/*
 .idea/
 *.swp
 *.swo
+
+# Vercel local cache
+.vercel/

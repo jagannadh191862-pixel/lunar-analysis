@@ -2,6 +2,7 @@
 Database Access Layer for Lunar Correspondence AI
 Provides thread-safe SQLite operations, relational migrations,
 password hashing with PBKDF2-HMAC-SHA256, and data access methods.
+Vercel-compatible: uses /tmp for ephemeral writable storage on serverless.
 """
 
 import os
@@ -10,9 +11,20 @@ import hashlib
 import secrets
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
+import shutil
 
-DB_PATH = Path(__file__).resolve().parent / "lunar_ai.db"
-SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
+_LOCAL_SCHEMA = Path(__file__).resolve().parent / "schema.sql"
+
+# Vercel filesystem is read-only except /tmp
+if os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"):
+    DB_PATH = Path("/tmp/lunar_ai.db")
+    SCHEMA_PATH = Path("/tmp/schema.sql")
+    # Copy schema to /tmp so it's readable during cold start
+    if _LOCAL_SCHEMA.exists() and not SCHEMA_PATH.exists():
+        shutil.copy(str(_LOCAL_SCHEMA), str(SCHEMA_PATH))
+else:
+    DB_PATH = Path(__file__).resolve().parent / "lunar_ai.db"
+    SCHEMA_PATH = _LOCAL_SCHEMA
 
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(str(DB_PATH), timeout=20.0)
