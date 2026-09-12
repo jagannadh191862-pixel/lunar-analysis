@@ -1,5 +1,6 @@
 {
   "version": 2,
+
   "builds": [
     {
       "src": "api/index.py",
@@ -10,14 +11,23 @@
       "use": "@vercel/static"
     }
   ],
+
   "routes": [
-    { "src": "/api/(.*)", "dest": "/api/index.py" },
-    { "src": "/data/benchmark_pairs/(.*)", "dest": "/api/index.py" },
-    { "src": "/storage/uploads/(.*)", "dest": "/api/index.py" },
-    { "src": "/(.*)", "dest": "/public/$1" }
-  ],
-  "env": {
-    "LUNAR_SECRET_KEY": "chandrayaan2-vercel-secret-key",
-    "VERCEL_ENV": "1"
-  }
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/data/benchmark_pairs/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/storage/uploads/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/public/$1"
+    }
+  ]
 }
